@@ -1,0 +1,454 @@
+diff --git a/p4Source/kalman.p4 b/p4Source/kalman.p4
+deleted file mode 100644
+index a25976b8f..000000000
+--- a/p4Source/kalman.p4
++++ /dev/null
+@@ -1,73 +0,0 @@
+-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
+-/**
+- * Copyright (c) 2020  University of Ottawa.
+- *
+- * This file is part of ndnSIM. See AUTHORS for complete list of ndnSIM authors and
+- * contributors.
+- *
+- * ndnSIM is free software: you can redistribute it and/or modify it under the terms
+- * of the GNU General Public License as published by the Free Software Foundation,
+- * either version 3 of the License, or (at your option) any later version.
+- *
+- * ndnSIM is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+- * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+- * PURPOSE.  See the GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License along with
+- * ndnSIM, e.g., in COPYING.md file.  If not, see <http://www.gnu.org/licenses/>.
+- **/
+-
+-#include "v1model.p4"
+-
+-//hash for the string - data, assumed to be part of the namespace /sensor1/data/value/
+-#define DATA_HASH  14752253762927134915
+-#define ALERT_HASH  1493425201293809283
+-
+-
+-control P4Function(inout standard_metadata_t std_meta) {
+-    //Used to match namespace of the packet
+-    bit<64> componentHash = 0;
+-    bit<64> sensorValue = 0;
+-
+-
+-    action loadSensorValues() {
+-                log_msg("Loading the sensor values from Pkt to P4");
+-		get_name_component_integer(sensorValue, 3);
+-                log_msg("sensor value",sensorValue);
+-    }
+-
+-    action nop() {
+-    }
+-
+-
+-    table checkNamespace {
+-       key={   
+-           componentHash: exact;
+-       }
+-       actions={
+-	   loadSensorValues;
+-           nop;	   
+-       }
+-       default_action=nop();
+-       const entries={
+-           (DATA_HASH) : loadSensorValues();
+-           (ALERT_HASH) : loadSensorValues();
+-       }
+-    }
+-
+-
+-
+-    apply {
+-/*
+-    1. Match namespace
+-    2. Get the sensor value as an integer
+-    3. Save Integer value in a register 
+-*/
+-	//data string will always be the 2nd component of the namespace	
+-    	get_name_component_hash(componentHash, 2);
+-	checkNamespace.apply();
+-
+-    }
+-}
+-
+-#include "function-model-footer.p4"
+diff --git a/scratch/kalman.cc b/scratch/kalman.cc
+deleted file mode 100644
+index 3fd8c6932..000000000
+--- a/scratch/kalman.cc
++++ /dev/null
+@@ -1,369 +0,0 @@
+-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
+-/**
+- * Copyright (c) 2020  University of Ottawa.
+- *
+- * This file is part of ndnSIM. See AUTHORS for complete list of ndnSIM authors and
+- * contributors.
+- *
+- * ndnSIM is free software: you can redistribute it and/or modify it under the terms
+- * of the GNU General Public License as published by the Free Software Foundation,
+- * either version 3 of the License, or (at your option) any later version.
+- *
+- * ndnSIM is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+- * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+- * PURPOSE.  See the GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License along with
+- * ndnSIM, e.g., in COPYING.md file.  If not, see <http://www.gnu.org/licenses/>.
+- **/
+-
+-#include "ns3/core-module.h"
+-#include "ns3/network-module.h"
+-#include "ns3/point-to-point-module.h"
+-#include "ns3/traffic-control-module.h"
+-#include "ns3/ndnSIM-module.h"
+-
+-#include <tuple>
+-
+-namespace ns3 {
+-
+-
+-struct DataTimes {
+-  std::vector<std::tuple<double, double, size_t, double, long, long, double>> dataTimesSensor;
+-  std::vector<std::tuple<double, double, size_t, double, long, long, double>> dataTimesSensorAlert;
+-  std::vector<std::tuple<double, double, size_t, double, long, long, double>> dataTimesVODVideo;
+-  std::vector<std::tuple<double, double, size_t, double, long, long, double>> dataTimesVODSearch;
+-};
+-
+-void traceDataPacketsTransmitted(struct DataTimes* dataTimes,
+-  shared_ptr<const ndn::Data> data, Ptr<ndn::App> app, shared_ptr<ndn::Face> face) {
+-  ndn::Name dataContentName;
+-  if (data->getName().getSecondaryName().empty()) {
+-    dataContentName = data->getName().getPrimaryName();
+-  }
+-  else {
+-    dataContentName = data->getName().getSecondaryName();
+-  }
+-  uint32_t seq = dataContentName.at(-1).toSequenceNumber();
+-  std::string contentName = dataContentName.getPrefix(-1).toUri();
+-  if (contentName == "/sensor") {
+-    dataTimes->dataTimesSensor.emplace_back(Simulator::Now().GetSeconds(), 0, 0, 0, 0, 0, 0);
+-  } else if (contentName == "/sensor/alert") {
+-    dataTimes->dataTimesSensorAlert.emplace_back(Simulator::Now().GetSeconds(), 0, 0, 0, 0, 0, 0);
+-  } else if (contentName == "/VOD/video/1") {
+-    dataTimes->dataTimesVODVideo.emplace_back(Simulator::Now().GetSeconds(), 0, 0, 0, 0, 0, 0);
+-  } else {
+-    //VOD search
+-    dataTimes->dataTimesVODSearch.emplace_back(Simulator::Now().GetSeconds(), 0, 0, 0, 0, 0, 0);
+-  }
+-  std::cout << Simulator::Now().GetSeconds() << "s: " << contentName << ", seq=" << seq << " sent" << std::endl;
+-}
+-
+-void traceDataPacketsReceived(struct DataTimes* dataTimes,
+-  shared_ptr<const ndn::Data> data, Ptr<ndn::App> app, shared_ptr<ndn::Face> face) {
+-  ndn::Name dataContentName;
+-  if (data->getName().getSecondaryName().empty()) {
+-    dataContentName = data->getName().getPrimaryName();
+-  }
+-  else {
+-    dataContentName = data->getName().getSecondaryName();
+-  }
+-  uint32_t seq = dataContentName.at(-1).toSequenceNumber();
+-  std::string contentName = dataContentName.getPrefix(-1).toUri();
+-  if (contentName == "/sensor") {
+-    std::get<1>(dataTimes->dataTimesSensor[seq]) = Simulator::Now().GetSeconds();
+-    std::get<2>(dataTimes->dataTimesSensor[seq]) = data->wireEncode().size();
+-  } else if (contentName == "/sensor/alert") {
+-    std::get<1>(dataTimes->dataTimesSensorAlert[seq]) = Simulator::Now().GetSeconds();
+-    std::get<2>(dataTimes->dataTimesSensorAlert[seq]) = data->wireEncode().size();
+-  } else if (contentName == "/VOD/video/1") {
+-    std::get<1>(dataTimes->dataTimesVODVideo[seq]) = Simulator::Now().GetSeconds();
+-    std::get<2>(dataTimes->dataTimesVODVideo[seq]) = data->wireEncode().size();
+-  } else {
+-    //VOD search
+-    std::get<1>(dataTimes->dataTimesVODSearch[seq]) = Simulator::Now().GetSeconds();
+-    std::get<2>(dataTimes->dataTimesVODSearch[seq]) = data->wireEncode().size();
+-  }
+-  std::cout << Simulator::Now().GetSeconds() << "s: " << contentName << ", seq=" << seq << " received" << std::endl;
+-}
+-
+-void computeDropRateAndDelays(std::vector<std::tuple<double, double, size_t, double, long, long, double>>& packetTimes, bool averageDelay) {
+-  long totalPacketsDropped = 0;
+-  size_t windowSize = 10;
+-  std::vector<int> dropHistory(windowSize, 0);
+-  std::vector<double> delayHistory(windowSize, 0);
+-  size_t currentPosition = 0;
+-  for (auto& entry : packetTimes) {
+-    double delay = 0;
+-    if (std::get<1>(entry) == 0) {
+-      ++totalPacketsDropped;
+-      dropHistory[currentPosition] = 1;
+-    }
+-    else {
+-      delay = std::get<1>(entry) - std::get<0>(entry);
+-      dropHistory[currentPosition] = 0;
+-    }
+-    delayHistory[currentPosition] = delay;
+-    currentPosition = (currentPosition + 1) % windowSize;
+-
+-    size_t nbPacketsDropped = 0;
+-    double delays = 0;
+-    for (size_t i=0; i<windowSize; ++i) {
+-      nbPacketsDropped += dropHistory[i];
+-      delays += delayHistory[i];
+-    }
+-    double dropRate = (double) nbPacketsDropped / (double) windowSize;
+-    size_t nbPacketsNotDropped = windowSize - nbPacketsDropped;
+-    if (averageDelay) {
+-      if (nbPacketsNotDropped == 0) {
+-        delay = 0;
+-      } else {
+-        delay = delays / (double) nbPacketsNotDropped;
+-      }
+-    }
+-    std::get<3>(entry) = delay;
+-    std::get<5>(entry) = totalPacketsDropped;
+-    std::get<6>(entry) = dropRate;
+-  }
+-}
+-
+-void computeThroughput(std::vector<std::tuple<double, double, size_t, double, long, long, double>>& packetTimes) {
+-  size_t windowSize = 10;
+-  std::vector<double> interPacketTimeHistory(windowSize, 0);
+-  std::vector<size_t> packetSizeHistory(windowSize, 0);
+-  double packetLastReceivedTime = 0;
+-  size_t currentPosition = 0;
+-  bool isFirst = true;
+-  for (auto& entry : packetTimes) {
+-    if (std::get<1>(entry) == 0) {
+-      interPacketTimeHistory[currentPosition] = 0;
+-      packetSizeHistory[currentPosition] = 0;
+-    }
+-    else {
+-      if (!isFirst) {
+-        interPacketTimeHistory[currentPosition] = std::get<1>(entry) - packetLastReceivedTime;
+-        packetSizeHistory[currentPosition] = std::get<2>(entry);
+-      } else {
+-        isFirst = false;
+-      }
+-      packetLastReceivedTime = std::get<1>(entry);
+-    }
+-    currentPosition = (currentPosition + 1) % windowSize;
+-
+-    double interPacketTimes = 0;
+-    size_t bytes = 0;
+-    for (size_t i=0; i<windowSize; ++i) {
+-      interPacketTimes += interPacketTimeHistory[i];
+-      bytes += packetSizeHistory[i];
+-    }
+-    long rate = (interPacketTimes == 0) ? 0 : bytes * 8 / interPacketTimes;
+-    std::get<4>(entry) = rate;
+-  }
+-}
+-
+-
+-void writeTraceResults(std::vector<std::tuple<double, double, size_t, double, long, long, double>>& flowMetrics, Ptr<OutputStreamWrapper> file) {
+-  for (auto& entry : flowMetrics) {
+-    double time = std::get<0>(entry);
+-    double delay = std::get<3>(entry);
+-    long rate = std::get<4>(entry);
+-    long totalPacketsDropped = std::get<5>(entry);
+-    double dropRate = std::get<6>(entry);
+-
+-    *file->GetStream() << time << "\t" << delay << "\t" << rate << "\t" << totalPacketsDropped << "\t" << dropRate << std::endl;
+-
+-    file->GetStream()->flush();
+-  }
+-}
+-
+-bool comparePacketTimeSent(std::tuple<double, double, size_t, double, long, long, double> packetTimes1,
+-                           std::tuple<double, double, size_t, double, long, long, double> packetTimes2) {
+-  //Sort on sent time
+-  return (std::get<0>(packetTimes1) < std::get<0>(packetTimes2));
+-}
+-
+-bool comparePacketTimeReceived(std::tuple<double, double, size_t, double, long, long, double> packetTimes1,
+-                               std::tuple<double, double, size_t, double, long, long, double> packetTimes2) {
+-  //Sort on received time
+-  return (std::get<1>(packetTimes1) < std::get<1>(packetTimes2));
+-}
+-
+-int
+-main(int argc, char* argv[])
+-{
+-  // setting default parameters for PointToPoint links and channels
+-  Config::SetDefault("ns3::PointToPointNetDevice::DataRate", StringValue("1.5Mbps"));
+-  Config::SetDefault("ns3::PointToPointChannel::Delay", StringValue("10ms"));
+-  Config::SetDefault("ns3::QueueBase::MaxSize", StringValue("1p"));
+-
+-  bool disableCongestionDetection = false;
+-
+-  // Read optional command-line parameters (e.g., enable visualizer with ./waf --run=<> --visualize
+-  CommandLine cmd;
+-  cmd.Parse(argc, argv);
+-
+-  // Creating nodes
+-  NodeContainer nodes;
+-  nodes.Create(4);
+-  Ptr<Node> SensorConsumer = nodes.Get(0);
+-  Ptr<Node> router1 = nodes.Get(1);
+-  Ptr<Node> SensorProducer = nodes.Get(2);
+-  Ptr<Node> router2 = nodes.Get(3);
+-
+-  // Connecting nodes using links
+-  PointToPointHelper p2p;
+-  //Consumers to router 1
+-  NetDeviceContainer c1r1 = p2p.Install(SensorConsumer, router1);
+-  //Producers to router 2
+-  NetDeviceContainer p1r2 = p2p.Install(SensorProducer, router2);
+-  //Router 1 to router 2
+-  NetDeviceContainer r1r2 = p2p.Install(router1, router2);
+-
+-  // Install NDN stack on all nodes
+-  ndn::endn::StackHelper ndnHelper;
+-  ndnHelper.setP4Activated(true);
+-  ndnHelper.setNodeUri("/SensorConsumer");
+-  ndnHelper.Install(SensorConsumer);
+-  ndnHelper.setNodeUri("/router1");
+-  ndnHelper.Install(router1);
+-  ndnHelper.setNodeUri("/SensorProducer");
+-  ndnHelper.Install(SensorProducer);
+-  ndnHelper.setNodeUri("/router2");
+-  ndnHelper.Install(router2);
+-
+-  // Link traffic control configuration
+-  TrafficControlHelper tchPfifo;
+-  tchPfifo.SetRootQueueDisc ("ns3::PfifoFastQueueDisc", "MaxSize", StringValue ("10p"), "NormalQueueWeight", UintegerValue (25));
+-  tchPfifo.Install(c1r1);
+-  tchPfifo.Install(p1r2);
+-  tchPfifo.Install(r1r2);
+-
+-  // Installing applications
+-
+-  // Sensor Consumer
+-  ndn::AppHelper SensorConsumerHelper("ns3::ndn::ConsumerCbr");
+-  SensorConsumerHelper.SetPrefix("/sensor");
+-  SensorConsumerHelper.SetAttribute("Frequency", StringValue("1")); // 1 interest per second to keep the connection alive
+-  SensorConsumerHelper.SetAttribute("AddInterestSequence", BooleanValue(false));
+-  SensorConsumerHelper.Install(SensorConsumer);
+-
+-
+-  // Sensor Producer
+-  ndn::AppHelper SensorProducerHelper("ns3::ndn::Producer");
+-  SensorProducerHelper.SetAttribute("PayloadSize", StringValue("1024"));
+-  SensorProducerHelper.SetAttribute("ScheduleData", BooleanValue(true));
+-  SensorProducerHelper.SetAttribute("ScheduleDataFrequency", StringValue("100")); // 100 data packets produced per second
+-  SensorProducerHelper.SetAttribute("ScheduledDataName", StringValue("/sensor"));
+-  SensorProducerHelper.Install(SensorProducer);
+-  SensorProducerHelper.SetAttribute("ScheduleDataFrequency", StringValue("1")); // 1 urgent packet pushed per second
+-  SensorProducerHelper.SetAttribute("ScheduledDataName", StringValue("/sensor/alert/3"));
+-  SensorProducerHelper.Install(SensorProducer);
+-
+-
+-  // Add P4 functions
+-  ndn::endn::TableHelper::AddP4Function(router1, "kalman", "p4Source/kalman.json");
+-  ndn::endn::TableHelper::AddP4Function(router2, "kalman", "p4Source/kalman.json");
+-
+-  // Add routes
+-  ndn::time::seconds timeout(2);
+-  //Sensors
+-  nfd::endn::efib::EFibEntryData sensorEFibEntry(nfd::endn::epit::Type::PERSISTENT, timeout, nfd::endn::epit::TimerExpiryAction::NONE,
+-                                  "", "");
+-  ndn::endn::TableHelper::AddEFibRoute(SensorConsumer, "/sensor", sensorEFibEntry);
+-  ndn::endn::TableHelper::AddEFibNextHop(SensorConsumer, "/sensor", router1); //c1 to r1
+-  ndn::endn::TableHelper::AddEFibRoute(router1, "/sensor", sensorEFibEntry);
+-  ndn::endn::TableHelper::AddEFibNextHop(router1, "/sensor", router2); //r1 to r2
+-  ndn::endn::TableHelper::AddEFibRoute(SensorProducer, "/sensor", sensorEFibEntry); //producer EFIB entry
+-
+-  ndn::endn::TableHelper::AddEFibRoute(router2, "/sensor", sensorEFibEntry);
+-  ndn::endn::TableHelper::AddEFibNextHop(router2, "/sensor", SensorProducer); //r2 to p1
+-
+-  //Sensor Alert
+-  nfd::endn::epit::EPitEntryData persistentEpit(nfd::endn::epit::Type::PERSISTENT, nfd::endn::epit::TimerExpiryAction::NONE,
+-                                               "kalman()");
+-  ndn::endn::TableHelper::AddEPitRoute(SensorProducer, "/sensor/alert", persistentEpit);
+-  ndn::endn::TableHelper::AddEPitNextHop(SensorProducer, "/sensor/alert", router2); //p1 to r2
+-  ndn::endn::TableHelper::AddEPitRoute(router2, "/sensor/alert", persistentEpit);
+-  ndn::endn::TableHelper::AddEPitNextHop(router2, "/sensor/alert", router1); //r2 to r1
+-  ndn::endn::TableHelper::AddEPitRoute(router1, "/sensor/alert", persistentEpit);
+-  ndn::endn::TableHelper::AddEPitNextHop(router1, "/sensor/alert", SensorConsumer); //r1 to c1
+-
+-
+-  //Topology routes
+-  nfd::endn::epit::EPitEntryData topologyEpit(nfd::endn::epit::Type::PERSISTENT, nfd::endn::epit::TimerExpiryAction::NONE,
+-                                               "");
+-  ndn::endn::TableHelper::AddEPitRoute(router2, "/SensorProducer", topologyEpit);
+-  ndn::endn::TableHelper::AddEPitNextHop(router2, "/SensorProducer", SensorProducer); //r2 to p1
+-
+-  topologyEpit.setP4FunctionString("kalman()");
+-
+-
+-  Simulator::Stop(Seconds(200.0));
+-
+-  //Connect trace source
+-  struct DataTimes dataTimes;
+-  std::ostringstream oss;
+-  oss << "/NodeList/" << SensorProducer->GetId() << "/ApplicationList/*/TransmittedDatas";
+-  Config::ConnectWithoutContext(oss.str(), MakeBoundCallback(&traceDataPacketsTransmitted, &dataTimes));
+-  oss.clear();
+-  oss.str("");
+-
+-  oss << "/NodeList/" << SensorConsumer->GetId() << "/ApplicationList/*/ReceivedDatas";
+-  Config::ConnectWithoutContext(oss.str(), MakeBoundCallback(&traceDataPacketsReceived, &dataTimes));
+-  oss.clear();
+-  oss.str("");
+-
+-
+-  Simulator::Run();
+-
+-  //Compute the flow metrics
+-  computeDropRateAndDelays(dataTimes.dataTimesSensor, true);
+-  std::sort(dataTimes.dataTimesSensor.begin(), dataTimes.dataTimesSensor.end(), comparePacketTimeReceived);
+-  computeThroughput(dataTimes.dataTimesSensor);
+-  std::sort(dataTimes.dataTimesSensor.begin(), dataTimes.dataTimesSensor.end(), comparePacketTimeSent);
+-
+-  computeDropRateAndDelays(dataTimes.dataTimesSensorAlert, false);
+-  std::sort(dataTimes.dataTimesSensorAlert.begin(), dataTimes.dataTimesSensorAlert.end(), comparePacketTimeReceived);
+-  computeThroughput(dataTimes.dataTimesSensorAlert);
+-  std::sort(dataTimes.dataTimesSensorAlert.begin(), dataTimes.dataTimesSensorAlert.end(), comparePacketTimeSent);
+-
+-  //Write the trace results
+-  AsciiTraceHelper sensorTH;
+-  oss << "results/sensor";
+-  if (disableCongestionDetection) {
+-    oss << "_ncd.dat";
+-  }
+-  else {
+-    oss << "_cd.dat";
+-  }
+-  Ptr<OutputStreamWrapper> sensorResultFile = sensorTH.CreateFileStream(oss.str());
+-  writeTraceResults(dataTimes.dataTimesSensor, sensorResultFile);
+-  oss.clear();
+-  oss.str("");
+-
+-  AsciiTraceHelper sensorAlertTH;
+-  oss << "results/sensorAlert";
+-  if (disableCongestionDetection) {
+-    oss << "_ncd.dat";
+-  }
+-  else {
+-    oss << "_cd.dat";
+-  }
+-  Ptr<OutputStreamWrapper> sensorAlertResultFile = sensorAlertTH.CreateFileStream(oss.str());
+-  writeTraceResults(dataTimes.dataTimesSensorAlert, sensorAlertResultFile);
+-  oss.clear();
+-  oss.str("");
+-
+-  Simulator::Destroy();
+-
+-  return 0;
+-}
+-
+-} // namespace ns3
+-
+-int
+-main(int argc, char* argv[])
+-{
+-  return ns3::main(argc, argv);
+-}
+-

@@ -1,0 +1,40 @@
+Data collection from the vr headset: 
+
+- Using Unreal Engine 
+- APIs: https://developer.oculus.com/documentation/unreal/unreal-blueprints-get-raw-sensor-data/
+
+Reading log from the VR headset using adb: 
+C:\Users\avkothap>adb logcat -s UE4 > temp_log.txt
+
+Test while collecting vr_log.txt dataset: 
+0-30 seconds - small movements
+30-60 seconds - big movements
+60-90 seconds - still on the table 
+
+Tilt Sensing using 3 axis accelerometer reference: https://www.nxp.com/files-static/sensors/doc/app_note/AN3461.pdf
+
+IMU used in Qualcomm chipsets  : https://invensense.tdk.com/download-pdf/icm-42688-p-datasheet/
+https://3cfeqx1hf82y3xcoull08ihx-wpengine.netdna-ssl.com/wp-content/uploads/2021/06/DS-000347-ICM-42688-P-v1.5.pdf
+
+IMU used in latest pixel phone : https://www.bosch-sensortec.com/products/motion-sensors/imus/bmi160/#technical
+
+
+ Sensitivity (typ.) Acc.
+	
+±2g: 16384 LSB/g
+±4g: 8192 LSB/g
+±8g: 4096 LSB/g
+±16g: 2048 LSB/g
+
+Sensitivity (typ.) Gyro.
+	
+±125 °/s: 262.4 LSB/°/s
+±250 °/s: 131.2 LSB/°/s
+±500 °/s: 65.6 LSB/°/s
+±1000 °/s: 32.8 LSB/°/s
+±2000 °/s: 16.4 LSB/°/s  
+
+- Oculus article mentioning Complementary filter is better than Kalman filter : https://developer.oculus.com/blog/sensor-fusion-keeping-it-simple/
+- complementary filter sample code: https://www.pieter-jan.com/node/11
+
+
